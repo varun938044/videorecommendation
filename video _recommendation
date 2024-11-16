@@ -1,0 +1,99 @@
+import requests
+import numpy as np
+from sklearn.metrics.pairwise import cosine_similarity
+from collections import defaultdict
+
+# API base URL and headers
+BASE_URL = "https://api.socialverseapp.com"
+HEADERS = {"Flic-Token": "flic_1e01009f9c1a54706f385bcc1993a08fd9647ba8f499572d280654d1c03c47bf"}
+
+# Function to fetch data from the APIs
+def fetch_data(endpoint, params=None):
+    response = requests.get(f"{BASE_URL}/{endpoint}", headers=HEADERS, params=params)
+    return response.json()
+
+# Fetch user interaction data
+def get_viewed_posts():
+    return fetch_data("posts/view", {"page": 1, "page_size": 1000})
+
+def get_liked_posts():
+    return fetch_data("posts/like", {"page": 1, "page_size": 5})
+
+def get_rated_posts():
+    return fetch_data("posts/rating", {"page": 1, "page_size": 5})
+def get_all_posts():
+    return fetch_data("posts/summary/get", {"page": 1, "page_size": 1000})
+
+# Calculate content similarity based on video metadata (e.g., genre, tags, etc.)
+def calculate_content_similarity(video_id, all_posts):
+    video = all_posts.get(video_id)
+    similarities = []
+    
+    for other_video in all_posts:
+        if other_video != video:
+            # Assume 'features' contains metadata info such as genre, tags, etc.
+            similarity = cosine_similarity([video['features']], [other_video['features']])[0][0]
+            similarities.append((other_video['id'], similarity))
+    
+    return sorted(similarities, key=lambda x: x[1], reverse=True)
+
+# Collaborative filtering (item-based)
+def get_item_based_collaborative_recommendations(user_interactions, all_posts):
+    item_based_recommendations = defaultdict(list)
+    
+    for user, videos in user_interactions.items():
+        for video in videos:
+            similar_videos = calculate_content_similarity(video, all_posts)
+            for sim_video_id, similarity in similar_videos:
+                item_based_recommendations[user].append((sim_video_id, similarity))
+    
+    return item_based_recommendations
+
+def generate_recommendations(user_id, viewed_posts, liked_posts, rated_posts, all_posts):
+    recommendations = []
+
+    # User interactions (views, likes, ratings) combined
+    user_interactions = defaultdict(list)
+    for post in viewed_posts + liked_posts + rated_posts:
+        user_interactions[user_id].append(post['id'])
+
+    # 1. Content-Based Filtering (Using metadata similarity)
+    for video in user_interactions[user_id]:
+        similar_videos = calculate_content_similarity(video, all_posts)
+        recommendations.extend(similar_videos)
+
+    # 2. Item-Based Collaborative Filtering
+    item_based_recommendations = get_item_based_collaborative_recommendations(user_interactions, all_posts)
+    recommendations.extend(item_based_recommendations.get(user_id, []))
+    
+    # Remove duplicates and sort by similarity score
+    recommendations = list(set(recommendations))
+    recommendations = sorted(recommendations, key=lambda x: x[1], reverse=True)
+    
+    # Filter out videos that the user has already interacted with
+    viewed_video_ids = {v['id'] for v in viewed_posts}
+    liked_video_ids = {v['id'] for v in liked_posts}
+    rated_video_ids = {v['id'] for v in rated_posts}
+    interacted_video_ids = viewed_video_ids.union(liked_video_ids, rated_video_ids)
+    
+    recommendations = [video for video in recommendations if video[0] not in interacted_video_ids]
+return recommendations
+
+# Main function
+if __name__ == "__main__":
+    # Fetch user interaction and video metadata
+    viewed_posts = get_viewed_posts().get("data", [])
+    liked_posts = get_liked_posts().get("data", [])
+    rated_posts = get_rated_posts().get("data", [])
+    all_posts = get_all_posts().get("data", {})
+
+    # Example: Generating recommendations for a specific user (user_id)
+    user_id = 12345  # Replace with the actual user ID
+
+    recommendations = generate_recommendations(user_id, viewed_posts, liked_posts, rated_posts, all_posts)
+    
+    # Print out the top 5 recommended video IDs
+    print(f"Top 5 recommended videos for User {user_id}:")
+    for video in recommendations[:5]:
+        print(f"Video ID: {video[0]} | Similarity Score: {video[1]}")
+
